@@ -1,26 +1,28 @@
 package org.interview.resume.dto;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
+
 import java.util.List;
 
 public record ResumeAnalysisDTO(
-    int overallScore,
-    ScoreDetailDTO scoreDetail,
-    String summary,
-    List<String> strengths,
-    List<SuggestionDTO> suggestions
+        @JsonProperty("overallScore") int overallScore,
+        @JsonProperty("scoreDetail") ScoreDetailDTO scoreDetail,
+        @JsonProperty("summary") String summary,
+        @JsonProperty("strengths") List<String> strengths,
+        @JsonProperty("suggestions") List<SuggestionDTO> suggestions
 ) {
     public record ScoreDetailDTO(
-        int contentScore,
-        int structureScore,
-        int skillMatchScore,
-        int expressionScore,
-        int projectScore
+            @JsonProperty("contentScore") int contentScore,
+            @JsonProperty("structureScore") int structureScore,
+            @JsonProperty("skillMatchScore") int skillMatchScore,
+            @JsonProperty("expressionScore") int expressionScore,
+            @JsonProperty("projectScore") int projectScore
     ) {}
 
     public record SuggestionDTO(
-        String category,
-        String priority,
-        String issue,
-        String recommendation
+            @JsonProperty("category") String category,
+            @JsonProperty("priority") String priority,
+            @JsonProperty("issue") String issue,
+            @JsonProperty("recommendation") String recommendation
     ) {}
 }

@@ -20,6 +20,8 @@ public class InterviewSessionEntity {
     @Column(nullable = false)
     private String difficulty;
 
+    private Long resumeId;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
     private SessionStatus status;
@@ -66,6 +68,9 @@ public class InterviewSessionEntity {
 
     public String getDifficulty() { return difficulty; }
     public void setDifficulty(String difficulty) { this.difficulty = difficulty; }
+
+    public Long getResumeId() { return resumeId; }
+    public void setResumeId(Long resumeId) { this.resumeId = resumeId; }
 
     public SessionStatus getStatus() { return status; }
     public void setStatus(SessionStatus status) { this.status = status; }

@@ -9,6 +9,7 @@ import org.interview.common.exception.BusinessException;
 import org.interview.common.exception.ErrorCode;
 import org.interview.config.DocumentParserService;
 import org.interview.config.MinioConfig;
+import org.interview.config.RedisStreamConfig;
 import org.interview.resume.dto.ResumeAnalysisDTO;
 import org.interview.resume.dto.ResumeDetailDTO;
 import org.interview.resume.dto.ResumeListItemDTO;
@@ -20,16 +21,17 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.converter.BeanOutputConverter;
+import org.springframework.data.redis.connection.stream.StreamRecords;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.InputStream;
 import java.time.LocalDateTime;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.UUID;
+import java.util.*;
 
 @Service
 public class ResumeService {
@@ -68,25 +70,31 @@ public class ResumeService {
     private final MinioClient minioClient;
     private final MinioConfig minioConfig;
     private final StructuredOutputService structuredOutputService;
+    private final ResumeKnowledgeService resumeKnowledgeService;
     private final ChatClient chatClient;
     private final ObjectMapper objectMapper;
-
+    private final StringRedisTemplate stringRedisTemplate;
     public ResumeService(ResumeRepository resumeRepository,
                          ResumeAnalysisRepository analysisRepository,
                          DocumentParserService documentParserService,
                          MinioClient minioClient,
                          MinioConfig minioConfig,
                          StructuredOutputService structuredOutputService,
+                         ResumeKnowledgeService resumeKnowledgeService,
                          ChatClient.Builder chatClientBuilder,
-                         ObjectMapper objectMapper) {
+                         ObjectMapper objectMapper,
+                         StringRedisTemplate stringRedisTemplate
+    ) {
         this.resumeRepository = resumeRepository;
         this.analysisRepository = analysisRepository;
         this.documentParserService = documentParserService;
         this.minioClient = minioClient;
         this.minioConfig = minioConfig;
         this.structuredOutputService = structuredOutputService;
+        this.resumeKnowledgeService = resumeKnowledgeService;
         this.chatClient = chatClientBuilder.build();
         this.objectMapper = objectMapper;
+        this.stringRedisTemplate = stringRedisTemplate;
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -126,22 +134,41 @@ public class ResumeService {
         log.info("简历已保存: id={}, filename={}, 耗时={}ms",
                 saved.getId(), filename, System.currentTimeMillis() - start);
 
-        // 6. AI analysis (synchronous)
-        ResumeAnalysisDTO analysis = analyzeResume(resumeText);
+//        // 6. AI analysis (synchronous)
+//        ResumeAnalysisDTO analysis = analyzeResume(resumeText);
+//
+//        // 7. 保存评分结果
+//        saveAnalysis(saved, analysis);
+//        saved.setAnalyzeStatus("COMPLETED");
+//        resumeRepository.save(saved);
+//
+//        log.info("简历上传 + 分析完成: id={}, score={}, 总耗时={}ms",
+//                saved.getId(), analysis.overallScore(), System.currentTimeMillis() - start);
+//
+//        // RAG 知识库索引（异步友好，但本项目保持同步简化）
+//        resumeKnowledgeService.indexResume(saved.getId(), resumeText);
 
-        // 7. 保存评分结果
-        saveAnalysis(saved, analysis);
-        saved.setAnalyzeStatus("COMPLETED");
-        resumeRepository.save(saved);
-
-        log.info("简历上传 + 分析完成: id={}, score={}, 总耗时={}ms",
-                saved.getId(), analysis.overallScore(), System.currentTimeMillis() - start);
+        //--------------------------------
+        //异步改造：事务提交后再发 Redis 消息，避免消费端读到未提交的数据
+        Long resumeId = saved.getId();
+        TransactionSynchronizationManager.registerSynchronization(
+                new TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        // 发一条消息到 resume:tasks，两个消费组各自独立消费
+                        stringRedisTemplate.opsForStream()
+                                .add(StreamRecords.newRecord()
+                                        .in(RedisStreamConfig.STREAM_KEY)
+                                        .ofMap(Map.of("resumeId", resumeId.toString())));
+                        log.info("简历消息已发送: resumeId={}", resumeId);
+                    }
+                });
 
         return Map.of(
                 "resumeId", saved.getId(),
                 "filename", filename,
-                "analysis", analysis,
-                "duplicate", false
+                "analyzeStatus", "PENDING",
+                "indexStatus", "PENDING"
         );
     }
 
@@ -207,6 +234,7 @@ public class ResumeService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.RESUME_NOT_FOUND, "简历不存在: " + id));
         analysisRepository.deleteByResumeId(id);
         resumeRepository.delete(entity);
+        resumeKnowledgeService.deleteResumeIndex(id);
         log.info("简历已删除: id={}, filename={}", id, entity.getOriginalFilename());
     }
 
@@ -233,7 +261,7 @@ public class ResumeService {
         log.info("简历已重新分析: id={}, score={}", id, analysis.overallScore());
     }
 
-    private ResumeAnalysisDTO analyzeResume(String resumeText) {
+    public ResumeAnalysisDTO analyzeResume(String resumeText) {
         BeanOutputConverter<ResumeAnalysisDTO> converter = new BeanOutputConverter<>(ResumeAnalysisDTO.class);
         String format = converter.getFormat();
         String systemWithFormat = SYSTEM_PROMPT + "\n\n" + format;
@@ -288,15 +316,20 @@ public class ResumeService {
         existing.incrementAccessCount();
         resumeRepository.save(existing);
 
-        ResumeAnalysisEntity latest = analysisRepository.findFirstByResumeIdOrderByAnalyzedAtDesc(existing.getId());
-        boolean hasAnalysis = latest != null && "COMPLETED".equals(existing.getAnalyzeStatus());
+        Optional<ResumeAnalysisEntity> latest = analysisRepository.findFirstByResumeIdOrderByAnalyzedAtDesc(existing.getId());
+        boolean hasAnalysis =
+                latest.isPresent() &&
+                        "COMPLETED".equals(existing.getAnalyzeStatus());;
 
-        return Map.of(
-                "resumeId", existing.getId(),
-                "filename", existing.getOriginalFilename(),
-                "analysis", hasAnalysis ? buildAnalysisFromEntity(latest) : null,
-                "duplicate", true
-        );
+        Map<String, Object> result = new HashMap<>();
+
+        result.put("resumeId", existing.getId());
+        result.put("filename", existing.getOriginalFilename());
+        result.put("analysis",
+                hasAnalysis ? buildAnalysisFromEntity(latest.get()) : null);
+        result.put("duplicate", true);
+
+        return result;
     }
 
     private ResumeAnalysisDTO buildAnalysisFromEntity(ResumeAnalysisEntity entity) {

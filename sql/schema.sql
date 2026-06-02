@@ -79,6 +79,18 @@ CREATE TABLE IF NOT EXISTS interview_answers (
 );
 
 -- ============================================================
+-- 简历知识库：向量化分块存储（用于 RAG）
+-- 需要 pgvector 扩展（docker 镜像已内置）
+-- ============================================================
+CREATE EXTENSION IF NOT EXISTS vector;
+
+-- resume_chunks 由 JPA 自动建表（不含 vector 列）
+-- 此处单独添加 vector 列和索引（Hibernate 不感知 vector 类型）
+ALTER TABLE IF EXISTS resume_chunks ADD COLUMN IF NOT EXISTS embedding vector(1024);
+CREATE INDEX IF NOT EXISTS idx_chunks_resume_id ON resume_chunks(resume_id);
+CREATE INDEX IF NOT EXISTS idx_chunks_embedding ON resume_chunks USING ivfflat (embedding vector_cosine_ops) WITH (lists = 10);
+
+-- ============================================================
 -- H2 → PostgreSQL 关键差异总结
 -- ============================================================
 -- 1. 自增主键

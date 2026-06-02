@@ -1,9 +1,11 @@
 package org.interview.resume.entity;
 
 import jakarta.persistence.*;
+import org.hibernate.annotations.DynamicUpdate;
 import java.time.LocalDateTime;
 
 @Entity
+@DynamicUpdate
 @Table(name = "resumes", indexes = {
     @Index(name = "idx_resume_hash", columnList = "fileHash", unique = true)
 })
@@ -45,6 +47,9 @@ public class ResumeEntity {
     @Column(length = 500)
     private String analyzeError;
 
+    @Column(length = 20)
+    private String indexStatus="PENDING";
+
     @PrePersist
     protected void onCreate() {
         uploadedAt = LocalDateTime.now();
@@ -83,4 +88,9 @@ public class ResumeEntity {
     public void setAnalyzeStatus(String analyzeStatus) { this.analyzeStatus = analyzeStatus; }
     public String getAnalyzeError() { return analyzeError; }
     public void setAnalyzeError(String analyzeError) { this.analyzeError = analyzeError; }
+
+    public String getIndexStatus() {
+        return indexStatus;
+    }
+    public void setIndexStatus(String indexStatus) { this.indexStatus = indexStatus; }
 }

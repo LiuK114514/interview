@@ -9,6 +9,8 @@ import org.interview.common.exception.ErrorCode;
 import org.interview.interview.dto.*;
 import org.interview.interview.entity.InterviewAnswerEntity;
 import org.interview.interview.entity.InterviewSessionEntity;
+import org.interview.resume.entity.ResumeEntity;
+import org.interview.resume.repository.ResumeRepository;
 import org.interview.interview.entity.SessionStatus;
 import org.interview.interview.repository.InterviewAnswerRepository;
 import org.interview.interview.repository.InterviewSessionRepository;
@@ -30,16 +32,19 @@ public class InterviewService {
     private final StructuredOutputService structuredOutputService;
     private final InterviewSessionRepository sessionRepository;
     private final InterviewAnswerRepository answerRepository;
+    private final ResumeRepository resumeRepository;
     private final ObjectMapper objectMapper;
 
     public InterviewService(OpenAiChatModel chatModel,
                             StructuredOutputService structuredOutputService,
                             InterviewSessionRepository sessionRepository,
                             InterviewAnswerRepository answerRepository,
+                            ResumeRepository resumeRepository,
                             ObjectMapper objectMapper) {
         this.structuredOutputService = structuredOutputService;
         this.sessionRepository = sessionRepository;
         this.answerRepository = answerRepository;
+        this.resumeRepository = resumeRepository;
         this.objectMapper = objectMapper;
         this.chatClient = ChatClient.builder(chatModel).build();
     }
@@ -49,19 +54,52 @@ public class InterviewService {
         BeanOutputConverter<InterviewQuestions> converter =
                 new BeanOutputConverter<>(InterviewQuestions.class);
 
-        String systemPrompt = """
-                你是一个资深技术面试官，擅长出技术面试题。
-                请根据以下要求生成面试题目：
-                - 技能方向：%s
-                - 难度级别：%s
+        ResumeEntity resume = null;
+        if (request.resumeId() != null) {
+            resume = resumeRepository.findById(request.resumeId())
+                    .orElseThrow(() -> new BusinessException(ErrorCode.RESUME_NOT_FOUND,
+                            "简历不存在: " + request.resumeId()));
+        }
 
-                要求：
-                - 生成 5 道高质量面试题
-                - 覆盖基础知识、实际应用和原理理解
-                - 题目要有区分度
+        boolean hasResume = resume != null && resume.getResumeText() != null && !resume.getResumeText().isBlank();
+        String systemPrompt;
+        if (hasResume) {
+            systemPrompt = """
+                    你是一个资深技术面试官。你正在面试一位候选人，请严格根据该候选人的简历内容出题。
 
-                %s
-                """.formatted(request.skillId(), request.difficulty(), converter.getFormat());
+                    ===== 候选人简历全文 =====
+                    %s
+                    ===== 简历结束 =====
+
+                    出题要求：
+                    - 技能方向：%s
+                    - 难度级别：%s
+                    - 生成 5 道面试题
+                    - 题目必须围绕简历中提到的技术栈、项目经历和技能来出
+                    - 每道题都要能明确对应到简历中的具体内容（如某个项目、某项技术、某个职责）
+                    - 禁止出简历未涉及领域的题目
+                    - 如果简历中包含了项目经验，优先从项目经验中挖掘深度的技术问题
+                    - 题目要有区分度，兼顾基础理解和实践深度
+
+                    %s
+                    """.formatted(resume.getResumeText(), request.skillId(), request.difficulty(),
+                    converter.getFormat());
+        } else {
+            systemPrompt = """
+                    你是一个资深技术面试官，擅长出技术面试题。
+                    请根据以下要求生成面试题目：
+                    - 技能方向：%s
+                    - 难度级别：%s
+
+                    要求：
+                    - 生成 5 道高质量面试题
+                    - 覆盖基础知识、实际应用和原理理解
+                    - 题目要有区分度
+
+                    %s
+                    """.formatted(request.skillId(), request.difficulty(),
+                    converter.getFormat());
+        }
 
         InterviewQuestions interviewQuestions = structuredOutputService.invoke(
                 chatClient, systemPrompt, "请开始出题", converter, "面试出题");
@@ -72,6 +110,7 @@ public class InterviewService {
         session.setSessionId(UUID.randomUUID().toString().replace("-", "").substring(0, 8));
         session.setSkillId(request.skillId());
         session.setDifficulty(request.difficulty());
+        session.setResumeId(request.resumeId());
         session.setStatus(SessionStatus.CREATED);
         session.setCurrentQuestionIndex(0);
         session.setQuestionsJson(toJson(questions));
@@ -200,26 +239,64 @@ public class InterviewService {
             qaSection.append("反馈: %s\n\n".formatted(a.getFeedback()));
         }
 
-        String systemPrompt = """
-                你是一个资深技术面试官。请根据以下面试记录生成综合评估报告。
+        // 报告时也注入简历全文（如果有关联简历）
+        String resumeText = null;
+        if (session.getResumeId() != null) {
+            ResumeEntity resume = resumeRepository.findById(session.getResumeId()).orElse(null);
+            if (resume != null && resume.getResumeText() != null && !resume.getResumeText().isBlank()) {
+                resumeText = resume.getResumeText();
+            }
+        }
 
-                技能方向：%s
-                难度级别：%s
+        boolean hasResume = resumeText != null;
+        String systemPrompt;
+        if (hasResume) {
+            systemPrompt = """
+                    你是一个资深技术面试官。请根据以下面试记录和候选人的简历背景，生成综合评估报告。
 
-                以下是面试者的问答记录：
+                    技能方向：%s
+                    难度级别：%s
 
-                %s
+                    ===== 候选人简历全文 =====
+                    %s
+                    ===== 简历结束 =====
 
-                请给出：
-                - totalScore：总分（满分 100）
-                - overallFeedback：综合评价（200 字左右）
-                - strengths：列出 2-3 个优势
-                - improvementSuggestions：列出 2-3 个改进建议
-                - categoryBreakdown：按分类列出平均分和改进建议
+                    以下是面试者的问答记录：
 
-                %s
-                """.formatted(session.getSkillId(), session.getDifficulty(),
-                qaSection.toString(), converter.getFormat());
+                    %s
+
+                    请给出：
+                    - totalScore：总分（满分 100）
+                    - overallFeedback：综合评价（200 字左右），需结合简历背景分析候选人的表现
+                    - strengths：列出 2-3 个优势，结合简历中的项目经验和技术栈
+                    - improvementSuggestions：列出 2-3 个改进建议，结合简历中提到的技能深度
+                    - categoryBreakdown：按分类列出平均分和改进建议
+
+                    %s
+                    """.formatted(session.getSkillId(), session.getDifficulty(),
+                    resumeText, qaSection.toString(), converter.getFormat());
+        } else {
+            systemPrompt = """
+                    你是一个资深技术面试官。请根据以下面试记录生成综合评估报告。
+
+                    技能方向：%s
+                    难度级别：%s
+
+                    以下是面试者的问答记录：
+
+                    %s
+
+                    请给出：
+                    - totalScore：总分（满分 100）
+                    - overallFeedback：综合评价（200 字左右）
+                    - strengths：列出 2-3 个优势
+                    - improvementSuggestions：列出 2-3 个改进建议
+                    - categoryBreakdown：按分类列出平均分和改进建议
+
+                    %s
+                    """.formatted(session.getSkillId(), session.getDifficulty(),
+                    qaSection.toString(), converter.getFormat());
+        }
 
         return structuredOutputService.invoke(
                 chatClient, systemPrompt, "请生成面试报告", converter, "面试报告");

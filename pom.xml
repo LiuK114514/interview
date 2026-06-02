@@ -85,6 +85,13 @@
             <version>2.9.2</version>
         </dependency>
 
+        <!-- commons-io（Tika 需要 >= 2.18.0 的 ChecksumInputStream） -->
+        <dependency>
+            <groupId>commons-io</groupId>
+            <artifactId>commons-io</artifactId>
+            <version>2.18.0</version>
+        </dependency>
+
         <!-- MinIO 对象存储 -->
         <dependency>
             <groupId>io.minio</groupId>
@@ -92,6 +99,21 @@
             <version>8.5.17</version>
         </dependency>
 
+        <!-- pgvector JDBC 类型支持 -->
+        <dependency>
+            <groupId>com.pgvector</groupId>
+            <artifactId>pgvector</artifactId>
+            <version>0.1.6</version>
+        </dependency>
+        <!-- Redis -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-pool2</artifactId>
+        </dependency>
         <!-- Test -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

@@ -1,4 +1,4 @@
 package org.interview.interview.dto;
 
-public record CreateInterviewRequest(String skillId, String difficulty) {
+public record CreateInterviewRequest(String skillId, String difficulty, Long resumeId) {
 }
