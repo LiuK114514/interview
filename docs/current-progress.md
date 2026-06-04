@@ -21,7 +21,7 @@
 
 ---
 
-## 最新进度（2026-06-02）
+## 最新进度（2026-06-04）
 
 ### Phase 13：面试-简历关联度优化 ✅ 已完成
 
@@ -40,6 +40,33 @@
 | 报告评估 | 同向量检索片段 | 简历全文注入，分析结合简历背景 |
 
 **清理：** 移除了 `InterviewService` 中对 `ResumeKnowledgeService` 的依赖（不再需要向量检索简历片段）
+
+---
+
+### SSE 流式输出 ✅ 已完成
+
+**改动文件：** `ChatController.java` / `api/index.js` / `Chat.jsx`
+
+**实现方案：**
+
+| 层 | 技术选型 | 要点 |
+|---|---|---|
+| 后端 | `SseEmitter` + `ChatClient.stream().content()` | 5min 超时，三个命名事件：`message` / `done` / `error` |
+| 前端 API | `fetch` + `ReadableStream` + 行解析 | 按 `event:` / `data:` 行协议解析，支持断行缓冲 |
+| 前端 UI | `useRef` 累积流式文本 + `streamingText` render | 避免因 React 批量更新丢失片段，Markdown 实时渲染 |
+
+**核心流程：**
+
+```
+ChatController.chatStream()
+    │
+    ├─ 创建 SseEmitter (300s 超时)
+    ├─ 调用 ChatClient.prompt().stream().content()
+    │     └─ subscribe(onNext → emitter.send(event("message")),
+    │                 onError → emitter.send(event("error")),
+    │                 onComplete → emitter.send(event("done")))
+    └─ 返回 SseEmitter
+```
 
 ---
 
@@ -66,6 +93,9 @@
 
 | 端点 | 方法 | 说明 |
 |------|------|------|
+| `/api/chat/stream` | POST | SSE 流式对话（打字机效果） |
+| `/api/chat` | POST | 发送消息，支持多轮对话（sessionId） |
+| `/api/chat/analyze` | POST | 发送消息，返回结构化分析结果 |
 | `/api/interview/start` | POST | 开始面试（可选 resumeId 关联简历） |
 | `/api/interview/answer` | POST | 提交答案 + AI 评估 |
 | `/api/interview/next` | POST | 获取下一题 |

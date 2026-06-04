@@ -22,6 +22,7 @@
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | POST | `/api/chat` | 发送消息，支持多轮对话（sessionId） |
+| POST | `/api/chat/stream` | SSE 流式对话（打字机效果，5min 超时） |
 | POST | `/api/chat/analyze` | 发送消息，返回结构化分析结果 |
 | POST | `/api/interview/start` | 创建面试会话，AI 出题 |
 | POST | `/api/interview/answer` | 提交答案，AI 实时评估 |

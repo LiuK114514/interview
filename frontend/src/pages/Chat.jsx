@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -15,18 +15,20 @@ export default function Chat() {
   const [sessionId] = useState(() => crypto.randomUUID());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [streamingText, setStreamingText] = useState('');
   const bottomRef = useRef(null);
   const inputRef = useRef(null);
+  const streamingRef = useRef('');
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  }, [messages, streamingText]);
 
   useEffect(() => {
     inputRef.current?.focus();
   }, []);
 
-  async function handleSend(e) {
+  const handleSend = useCallback(function (e) {
     e?.preventDefault();
     if (!input.trim() || loading) return;
     const userMsg = input.trim();
@@ -34,20 +36,37 @@ export default function Chat() {
     setMessages(prev => [...prev, { role: 'user', text: userMsg }]);
     setLoading(true);
     setError(null);
-    try {
-      const res = await chatApi.send({ message: userMsg, sessionId });
-      setMessages(prev => [...prev, { role: 'ai', text: res.reply || res.content || res.message || JSON.stringify(res) }]);
-    } catch (err) {
-      setError(err.message);
-      setMessages(prev => [...prev, { role: 'error', text: err.message }]);
-    } finally {
-      setLoading(false);
-      inputRef.current?.focus();
-    }
-  }
+    streamingRef.current = '';
+    setStreamingText('');
 
-function handleClear() {
+    chatApi.sendStream(
+      { message: userMsg, sessionId },
+      {
+        onMessage(chunk) {
+          streamingRef.current += chunk;
+          setStreamingText(streamingRef.current);
+        },
+        onDone() {
+          const finalText = streamingRef.current;
+          streamingRef.current = '';
+          setStreamingText('');
+          setMessages(prev => [...prev, { role: 'ai', text: finalText }]);
+          setLoading(false);
+          inputRef.current?.focus();
+        },
+        onError(errMsg) {
+          setError(errMsg);
+          setLoading(false);
+          inputRef.current?.focus();
+        },
+      }
+    );
+  }, [input, loading, sessionId]);
+
+  function handleClear() {
     setMessages([WELCOME_MESSAGE]);
+    setStreamingText('');
+    streamingRef.current = '';
   }
 
   return (
@@ -113,12 +132,43 @@ function handleClear() {
         </AnimatePresence>
 
         {loading && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
-            <div style={{ width: 32, height: 32, borderRadius: '50%', background: 'var(--color-bg-card-hover)', border: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.7rem', color: 'var(--color-text-secondary)' }}>AI</div>
-            <div className="card" style={{ padding: '0.85rem 1.1rem', display: 'flex', gap: '0.3rem' }}>
-              <span className="skeleton" style={{ width: 4, height: 14, display: 'inline-block' }} />
-              <span className="skeleton" style={{ width: 8, height: 14, display: 'inline-block' }} />
-              <span className="skeleton" style={{ width: 4, height: 14, display: 'inline-block' }} />
+          <motion.div
+            key="streaming"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-start' }}
+          >
+            <div style={{
+              width: 32, height: 32, borderRadius: '50%', flexShrink: 0,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: '0.85rem', fontWeight: 600,
+              background: 'var(--color-bg-card-hover)',
+              color: 'var(--color-text-secondary)',
+              border: '1px solid var(--color-border)',
+            }}>AI</div>
+            <div style={{
+              maxWidth: '70%',
+              padding: '0.85rem 1.1rem',
+              borderRadius: 'var(--radius-lg) var(--radius-lg) var(--radius-lg) var(--radius-sm)',
+              background: 'var(--color-bg-card)',
+              border: '1px solid var(--color-border)',
+              lineHeight: 1.7,
+              fontSize: '0.92rem',
+              color: 'var(--color-text)',
+              overflow: 'hidden',
+            }}>
+              {streamingText ? (
+                <>
+                  <MarkdownContent text={streamingText} />
+                  <span className="cursor-blink">|</span>
+                </>
+              ) : (
+                <div style={{ display: 'flex', gap: '0.3rem' }}>
+                  <span className="skeleton" style={{ width: 4, height: 14, display: 'inline-block' }} />
+                  <span className="skeleton" style={{ width: 8, height: 14, display: 'inline-block' }} />
+                  <span className="skeleton" style={{ width: 4, height: 14, display: 'inline-block' }} />
+                </div>
+              )}
             </div>
           </motion.div>
         )}

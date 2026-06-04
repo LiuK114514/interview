@@ -11,6 +11,81 @@ chatClient.prompt()
     .content()                   // 获取文本回复
 ```
 
+### 流式调用（SSE）
+
+```
+chatClient.prompt()
+    .user("用户消息")
+    .advisors(a -> ...)
+    .stream()                    // 流式调用 ← 区别在这里
+    .content()                   // 返回 Flux<String>
+    .subscribe(
+        chunk -> { /* 逐块处理 */ },
+        error -> { /* 异常处理 */ },
+        () -> { /* 完成回调 */ }
+    );
+```
+
+**与同步调用的区别：**
+
+| 维度 | `.call().content()` | `.stream().content()` |
+|------|-------------------|---------------------|
+| 返回类型 | `String`（完整文本） | `Flux<String>`（反应式流） |
+| 响应时间 | 等待 LLM 完整生成后才返回 | 边生成边推送，首字延迟低 |
+| 适用场景 | 非实时（分析、评估） | 实时对话、聊天 |
+
+## SSE 服务端推送模式
+
+在 `ChatController` 中使用的 `SseEmitter` 模式：
+
+```
+@PostMapping("/api/chat/stream")
+public SseEmitter chatStream(@RequestBody ChatRequest request) {
+    SseEmitter emitter = new SseEmitter(300_000L);  // 5min 超时
+
+    chatClient.prompt()
+            .user(request.message())
+            .stream().content()
+            .subscribe(
+                chunk -> emitter.send(SseEmitter.event()
+                    .name("message").data(chunk)),   // 逐字推送
+                error -> emitter.send(SseEmitter.event()
+                    .name("error").data(...)),         // 异常通知
+                () -> emitter.send(SseEmitter.event()
+                    .name("done").data(sessionId))     // 完成信号
+            );
+
+    return emitter;  // 立即返回，异步推送
+}
+```
+
+**三个命名事件协议：**
+- `event: message` / `data: <逐字内容>` — AI 回复的实时片段
+- `event: done` / `data: <sessionId>` — 流结束信号
+- `event: error` / `data: <错误消息>` — 异常通知
+
+**前端消费模式（fetch + ReadableStream）：**
+
+```
+const res = await fetch('/api/chat/stream', { method: 'POST', body: ... });
+const reader = res.body.getReader();
+const decoder = new TextDecoder();
+let buffer = '', currentEvent = '';
+
+while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    // 按行解析 event:/data: 协议
+    for (const line of buffer.split('\n')) { ... }
+}
+```
+
+**关键注意点：**
+- `SseEmitter` 适合单机/低并发场景；高并发推荐 `Flux<ServerSentEvent>`（Spring WebFlux）
+- 流式文本用 `useRef` 累积，避免 React 批量更新丢失片段
+- 5min 超时需根据 LLM 响应时长调整
+
 ## 多轮对话机制
 
 - `MessageWindowChatMemory`：保留最近 N 条消息的窗口式记忆

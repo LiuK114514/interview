@@ -13,7 +13,9 @@ import org.springframework.ai.converter.BeanOutputConverter;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import java.io.IOException;
 import java.util.UUID;
 
 @RestController
@@ -42,7 +44,6 @@ public class ChatController {
         }
         String sid = sessionId;
 
-        // 多轮对话：每次新建 ChatClient + advisor，避免共享 Builder 副作用
         ChatClient chatClient = builder.build();
         String reply = chatClient.prompt()
                 .user(request.message())
@@ -52,6 +53,55 @@ public class ChatController {
                 .content();
 
         return Result.success(new ChatResponse(sessionId, reply));
+    }
+
+    @PostMapping("/api/chat/stream")
+    public SseEmitter chatStream(@RequestBody ChatRequest request) {
+        String sessionId = request.sessionId();
+        if (sessionId == null || sessionId.isBlank()) {
+            sessionId = UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+        }
+        final String sid = sessionId;
+
+        SseEmitter emitter = new SseEmitter(300_000L); // 5min timeout
+
+        ChatClient chatClient = builder.build();
+        chatClient.prompt()
+                .user(request.message())
+                .advisors(chatMemoryAdvisor)
+                .advisors(a -> a.param("chat_memory_conversation_id", sid))
+                .stream()
+                .content()
+                .subscribe(
+                        chunk -> {
+                            try {
+                                emitter.send(SseEmitter.event()
+                                        .name("message")
+                                        .data(chunk));
+                            } catch (IOException e) {
+                                emitter.completeWithError(e);
+                            }
+                        },
+                        error -> {
+                            try {
+                                emitter.send(SseEmitter.event()
+                                        .name("error")
+                                        .data(error.getMessage() != null ? error.getMessage() : "流式响应异常"));
+                            } catch (IOException ignored) {
+                            }
+                            emitter.completeWithError(error);
+                        },
+                        () -> {
+                            try {
+                                emitter.send(SseEmitter.event()
+                                        .name("done")
+                                        .data(sid));
+                            } catch (IOException ignored) {
+                            }
+                            emitter.complete();
+                        });
+
+        return emitter;
     }
 
     @PostMapping("/api/chat/analyze")

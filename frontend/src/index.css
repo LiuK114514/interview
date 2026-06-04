@@ -604,3 +604,16 @@ textarea.input {
 .text-sm { font-size: 0.85rem; }
 .text-xs { font-size: 0.78rem; }
 .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---- Streaming Cursor ---- */
+.cursor-blink {
+  display: inline-block;
+  color: var(--color-accent);
+  font-weight: 300;
+  margin-left: 2px;
+  animation: blink 0.8s step-end infinite;
+}
+
+@keyframes blink {
+  50% { opacity: 0; }
+}

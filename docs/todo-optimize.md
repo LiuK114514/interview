@@ -4,18 +4,19 @@
 
 ---
 
-## 1. AI 问答流式输出（SSE）
+## 1. ~~AI 问答流式输出（SSE）~~ ✅ 已完成
 
-**现状：** Chat API 和 Interview API 都是同步阻塞调用，前端等待完整响应后才展示，大段文字出现前有空白等待期。
+**完成内容（2026-06-04）：**
+- 后端：`ChatController` 新增 `POST /api/chat/stream` 端点，基于 `SseEmitter` + `ChatClient.stream().content()` 实现
+- 事件协议：三个命名事件 — `message`（逐字内容）、`done`（携带 sessionId）、`error`（携带错误信息）
+- 前端：`api/index.js` 新增 `sendStream()`，基于 `fetch` + `ReadableStream` 逐行解析 SSE
+- 前端：`Chat.jsx` 流式渲染打字机效果，使用 `ref` 累积流式文本避免因频繁 setState 丢失片段
+- Markdown 实时渲染：流式文本动态解析，代码块/表格等跟随逐段显示
 
-**目标：** 改为 Server-Sent Events（SSE）流式输出，AI 逐字/逐段返回，前端实时展示打字机效果。
-
-**涉及范围：**
-- 后端：ChatController / InterviewService 改为 `Flux<ServerSentEvent>` 或 StreamingChatClient
-- 前端：Chat.jsx / Interview.jsx 改为 EventSource 或 fetch + ReadableStream
-- API 封装层：api/index.js 新增流式方法
-
-**参考：** Spring AI 的 StreamChatClient / ChatClient.stream()
+**涉及文件：**
+- `ChatController.java` — SseEmitter 端点（+15 行）
+- `api/index.js` — sendStream SSE 客户端
+- `Chat.jsx` — 流式打字机 UI（streamingText + ref 防丢）
 
 ---
 
